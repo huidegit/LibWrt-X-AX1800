@@ -88,14 +88,18 @@ jobs:
             || { echo "::error::luci-app-passwall 没装上（哪个 feed 里都没有）"; exit 1; }
           echo "[+] luci-app-passwall 来自: $(ls -d package/feeds/*/luci-app-passwall)"
 
-          echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
+          echo 'src-git istore https://github.com/linkease/istore.git;a97ace34f2da358a015b094d326bba2697697f2e' >> feeds.conf
           ./scripts/feeds update -p istore
           ./scripts/feeds install -p istore luci-app-store luci-lib-taskd taskd luci-lib-xterm
 
           # 3) 主题用 jerrykuku 的 argon 3.x（feed 里是 2.4.7，且 3.x 已把设置页并进主题包）
+          #    pin 到固定 commit：master 浮动，上游一次 bad push 就会打挂构建
           ./scripts/feeds uninstall luci-theme-argon luci-app-argon-config || true
           rm -rf package/luci-theme-argon package/luci-app-argon-config
-          git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon package/luci-theme-argon
+          git init -q package/luci-theme-argon
+          git -C package/luci-theme-argon remote add origin https://github.com/jerrykuku/luci-theme-argon.git
+          git -C package/luci-theme-argon fetch -q --depth 1 origin c6d63bd68aa9272e40c35cee5e615f45cc1e4eb0
+          git -C package/luci-theme-argon checkout -q FETCH_HEAD
           test -f package/luci-theme-argon/Makefile
           grep -q 'PKG_VERSION:=3' package/luci-theme-argon/Makefile
 
@@ -108,7 +112,11 @@ jobs:
           cat ax1800/config/repos.config >> .config
           cat ax1800/config/packages.config >> .config
           cat ax1800/config/packages-store.config >> .config
-          cat ax1800/config/kernel-dae.config >> .config
+          if [ "${KS:-12288}" != "6144" ]; then
+            cat ax1800/config/kernel-dae.config >> .config
+          else
+            echo "::warning::6144 模式：跳过 kernel-dae.config（BTF/XDP 内核装不进 6M 分区）"
+          fi
           cat ax1800/config/apk-repo.config >> .config
 
           # 12M：KERNEL_SIZE 默认 6144k，本机分区表是 12M
@@ -123,8 +131,8 @@ jobs:
           # apk 自建源：raw 直链，200 直出、不跳转（Releases 会 302 到 objects.githubusercontent.com，apk 不跟）
           mkdir -p files/etc/apk/repositories.d
           {
-            echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/apk-repo/target/packages.adb"
-            echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/apk-repo/kmods/packages.adb"
+            echo "https://raw.githubusercontent.com/huidegit/LibWrt-X-AX1800/apk-repo/target/packages.adb"
+            echo "https://raw.githubusercontent.com/huidegit/LibWrt-X-AX1800/apk-repo/kmods/packages.adb"
           } > files/etc/apk/repositories.d/00-ax1800.list
           cat files/etc/apk/repositories.d/00-ax1800.list
 
@@ -170,8 +178,10 @@ jobs:
           python3 - "$RP" <<'PY'
           import io, sys
           pw = sys.argv[1].strip() or 'root'      # 没配 Secret 时默认 root
-          if '\n' in pw or '\r' in pw:
-              sys.exit('[x] ROOT_PASSWORD 含换行，passwd 会读错')
+          # 99-ax1800 用单引号包裹 ROOT_PW='...'，密码含 ' 会直接写坏脚本（首启配置全灭）；
+          # \ 和换行同样危险
+          if any(c in pw for c in "'\\\n\r"):
+              sys.exit("[x] ROOT_PASSWORD 含 ' \\ 或换行——会写坏 99-ax1800 的单引号包裹")
           p = 'files/etc/uci-defaults/99-ax1800'
           s = io.open(p, encoding='utf-8').read()
           if '__ROOT_PASSWORD__' not in s:
@@ -214,8 +224,8 @@ jobs:
       - name: 预下载依赖
         run: |
           make download -j"$(nproc)" || make download -j1
-          # dl/ 里 <1KB 的文件是 404 页面留下的残骸，会让后面报 md5 不匹配
-          find dl -type f -size -1024c -delete
+          # dl/ 里 <1KB 的文件是 404 页面留下的残骸，会让后面报 md5 不匹配；*.tmp 是中断的半成品
+          find dl -type f \( -size -1024c -o -name "*.tmp" \) -delete
 
       - name: 编译
         run: |
@@ -236,7 +246,7 @@ jobs:
           fit=$(od -An -tu4 -j4 -N4 --endian=big "$f" | tr -d ' ')
           lim=$((KS * 1024))
           echo "内核 FIT: ${fit} 字节 / ${lim} 字节分区"
-          [ "$fit" -lt "$lim" ] || { echo "::error::内核超过 ${KS}k，会写穿 rootfs"; exit 1; }
+          [ "$fit" -le "$lim" ] || { echo "::error::内核超过 ${KS}k，会写穿 rootfs"; exit 1; }
           sq=$(od -An -tx1 -j"$lim" -N4 "$f" | tr -d ' \n')
           [ "$sq" = "68737173" ] || { echo "::error::${KS}k 处不是 hsqs（$sq），内核/rootfs 边界异常"; exit 1; }
           echo "[+] 边界正确"
@@ -245,7 +255,8 @@ jobs:
           echo "manifest: $(wc -l < "$man") 个包"
           for p in luci-theme-argon luci-app-store luci-app-openclash luci-app-usteer \
                    luci-app-autoreboot luci-app-samba4 luci-app-diskman kmod-nft-fullcone \
-                   kmod-usb-storage kmod-fs-ntfs3; do
+                   kmod-usb-storage kmod-fs-ntfs3 \
+                   kmod-qca-nss-drv kmod-qca-nss-ecm ipq-wifi-jdcloud_re-ss-01 kmod-ath11k; do
             grep -q "^$p " "$man" || { echo "::error::固件里没有 $p"; exit 1; }
           done
           echo "[+] 关键包都在"
@@ -365,7 +376,7 @@ jobs:
           git checkout -q --orphan apk-repo
           git add -A
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "apk-repo: kmod $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" apk-repo
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/huidegit/LibWrt-X-AX1800.git" apk-repo
           echo "[+] 已发布到 apk-repo 分支（$(du -sh "$OUT" | cut -f1)）"
 
       - name: 生成更新说明
@@ -394,9 +405,9 @@ jobs:
             echo "- 基于 commit \`$(git rev-parse --short HEAD)\`"
             echo
             echo "## apk 源"
-            echo "- 分支：https://github.com/${GITHUB_REPOSITORY}/tree/apk-repo"
-            echo "- 固件内置：https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/apk-repo/target/packages.adb"
-            echo "- 固件内置：https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/apk-repo/kmods/packages.adb"
+            echo "- 分支：https://github.com/huidegit/LibWrt-X-AX1800/tree/apk-repo"
+            echo "- 固件内置：https://raw.githubusercontent.com/huidegit/LibWrt-X-AX1800/apk-repo/target/packages.adb"
+            echo "- 固件内置：https://raw.githubusercontent.com/huidegit/LibWrt-X-AX1800/apk-repo/kmods/packages.adb"
             echo
             echo "## 刷写"
             echo "- 12M 表：U-Boot \`/firmware.html\` 刷 \`*factory.bin\`"

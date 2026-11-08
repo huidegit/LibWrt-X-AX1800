@@ -8,8 +8,10 @@ name: Sync upstream
 # 不会因为一次失败就把上游版本漏掉。
 
 on:
-  schedule:
-    - cron: '0 19 * * *'      # 19:00 UTC = 次日 03:00 CST
+  # 自动同步暂停：Actions 账单锁着，合并了也构建不了，别让它每天空跑报错。
+  # 账单恢复后把下面 schedule 两行解注释即可。
+  # schedule:
+  #   - cron: '0 19 * * *'    # 19:00 UTC = 次日 03:00 CST
   workflow_dispatch:
 
 permissions:
@@ -76,7 +78,8 @@ jobs:
           fi
 
       - name: 触发构建
-        if: steps.up.outputs.changed == 'true'
+        # Actions 账单恢复前手动触发；恢复后改回 if: steps.up.outputs.changed == 'true'
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

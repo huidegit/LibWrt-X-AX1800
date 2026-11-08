@@ -53,7 +53,11 @@ uci commit network
 # ---------- 4. IPv6：LAN 侧 RA + DHCPv6 ----------
 uci set dhcp.lan.dhcpv6='server' 2>/dev/null
 uci set dhcp.lan.ra='server' 2>/dev/null
-uci set dhcp.lan.ra_flags='managed-config other-config' 2>/dev/null
+# ra_flags 是 list 选项：必须 add_list 逐条加。写成含空格的单字符串，
+# odhcpd 解析不出 M/O 标志，"managed-config other-config" 会被当成一个未知 flag 丢弃
+uci -q delete dhcp.lan.ra_flags 2>/dev/null
+uci add_list dhcp.lan.ra_flags='managed-config' 2>/dev/null
+uci add_list dhcp.lan.ra_flags='other-config' 2>/dev/null
 uci set dhcp.lan.ra_default='1' 2>/dev/null
 uci commit dhcp
 
@@ -79,8 +83,9 @@ while uci -q get "wireless.@wifi-device[$i]" >/dev/null 2>&1; do
 	uci set "wireless.@wifi-device[$i].channel=auto" 2>/dev/null
 	case "$band" in
 		2g)
-			# 2.4G 只跑 HT20：40MHz 在拥挤环境里反而更慢
-			uci set "wireless.@wifi-device[$i].htmode=HT20" 2>/dev/null
+			# 2.4G 只跑 20MHz：40MHz 在拥挤环境里反而更慢。
+			# 用 HE20 而不是 HT20——HT20 会让 mac80211 不开 ieee80211ax，2.4G 退回 11n（≈144Mbps 上限）
+			uci set "wireless.@wifi-device[$i].htmode=HE20" 2>/dev/null
 			uci set "wireless.@wifi-device[$i].noscan=0" 2>/dev/null
 			;;
 		5g)
@@ -132,6 +137,16 @@ wifi reload >/dev/null 2>&1 || wifi up >/dev/null 2>&1
 # 自检：uci set "键='值'" 会把单引号写进值里（2026-11-03 那版固件就是这么坏的：
 # /etc/config/wireless 里出现 channel ''''auto''''，hostapd 解析失败，两个 radio 全禁用）
 bad=0
+# 两个 radio 都就位才算配好：ath11k 的 5G phy 注册可能晚于 uci-defaults，
+# 缺的那个只会拿到 hotplug 生成的默认配置（disabled）。不写标记，下次开机重试。
+n=0
+while uci -q get "wireless.@wifi-device[$n]" >/dev/null 2>&1; do
+	n=$((n + 1))
+done
+if [ "$n" -lt 2 ]; then
+	log "错误：只检测到 $n 个 radio（应有 2 个），下次开机重试"
+	bad=1
+fi
 for k in wireless.@wifi-device[0].channel wireless.@wifi-device[0].htmode          wireless.@wifi-iface[0].ssid wireless.@wifi-iface[0].encryption          wireless.@wifi-iface[0].key; do
 	v=$(uci -q get "$k")
 	case "$v" in
