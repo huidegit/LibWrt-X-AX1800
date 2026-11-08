@@ -37,6 +37,14 @@ export FORCE_UNSAFE_CONFIGURE=1
 step() { echo; echo "========== [$(date +%H:%M:%S)] $* =========="; }
 
 # ---------- 0. 预检 ----------
+# 最佳努力：弹出 Windows 日志窗口（本机构建时实时可见；失败静默不影响构建）
+for u in /mnt/c/Users/*/Music/LibWrt-X-AX1800/watch-build.bat; do
+	[ -f "$u" ] || continue
+	bw=$(wslpath -w "$u" 2>/dev/null) || continue
+	(/mnt/c/Windows/System32/cmd.exe /c start "" "$bw" >/dev/null 2>&1 &)
+	break
+done
+
 step "0. 预检"
 [ -f Makefile ] && [ -d target/linux ] || { echo "[x] 请在源码树根目录执行" >&2; exit 1; }
 case "$PWD" in /mnt/*) echo "[x] 不要在 /mnt/*（Windows 盘）里编译——权限和性能都不行，源码放 WSL ext4" >&2; exit 1 ;; esac
