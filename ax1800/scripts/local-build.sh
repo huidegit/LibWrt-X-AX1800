@@ -357,17 +357,51 @@ grep -q 'kmod-mac80211' /tmp/idx-kmods.json || echo "[w] kmods 索引里没找�
 )
 echo "[+] apk 源已备好：$OUT（分支 apk-repo，待推送）"
 
-# ---------- 9. Release 说明 ----------
-step "9. 生成 Release 说明"
-kver=$(grep -oP 'LINUX_KERNEL_HASH-\K[0-9.]+' target/linux/generic/kernel-6.12 2>/dev/null || echo unknown)
-gitsha=$(git rev-parse --short HEAD 2>/dev/null || echo local)
-{
-	echo "## 本次固件"
-	echo "- 内核 $kver，内核分区 ${KS}k，FIT ${fit} 字节，固件包 $(wc -l < "$man") 个"
-	echo "- 基于 commit \`$gitsha\`（本地构建 $(date +%Y-%m-%d)）"
-	up=$(git ls-remote https://github.com/LiBwrt/LibWrt.git refs/heads/25.12-nss 2>/dev/null | awk '{print $1}' | cut -c1-12)
-	[ -n "$up" ] && echo "- 上游基线: $up"
-	echo "- PassWall 已内置；全量 kmod 见 apk 源"
+	# ---------- 9. Release 说明 ----------
+	step "9. 生成 Release 说明"
+	kver=$(grep -oP 'LINUX_KERNEL_HASH-\K[0-9.]+' target/linux/generic/kernel-6.12 2>/dev/null || echo unknown)
+	gitsha=$(git rev-parse --short HEAD 2>/dev/null || echo local)
+
+	# 上游变更日志（全部本地完成，不碰 Actions 额度）：
+	# .upstream-state 记录上次构建时的上游 SHA，本次 diff 出"上游更新了什么"自动写进简介。
+	# 树与上游无共同祖先也不影响（log 范围对比只需两个 SHA 都在本地）。
+	prev=$(cat .upstream-state 2>/dev/null || echo "")
+	git remote remove upstream 2>/dev/null || true
+	git remote add upstream https://github.com/LiBwrt/openwrt-6.x.git
+	UPFETCH=""
+	if git fetch --filter=blob:none upstream 25.12-nss >/dev/null 2>&1; then
+		UPFETCH=$(git rev-parse FETCH_HEAD)
+	else
+		echo "[w] 上游 fetch 失败，Release 说明将缺少上游变更日志"
+	fi
+
+	{
+		echo "## 本次固件"
+		echo "- 内核 $kver，内核分区 ${KS}k，FIT ${fit} 字节，固件包 $(wc -l < "$man") 个"
+		echo "- 基于 commit \`$gitsha\`（本地构建 $(date +%Y-%m-%d)）"
+		if [ -n "$UPFETCH" ]; then
+			echo "- 上游基线: $(git rev-parse --short FETCH_HEAD)"
+		else
+			up=$(git ls-remote https://github.com/LiBwrt/LibWrt.git refs/heads/25.12-nss 2>/dev/null | awk '{print $1}' | cut -c1-12)
+			[ -n "$up" ] && echo "- 上游基线: $up"
+		fi
+		echo "- PassWall 已内置；全量 kmod 见 apk 源"
+		if [ -n "$UPFETCH" ]; then
+			echo
+			echo "## 上游更新（自上次构建以来）"
+			if [ -n "$prev" ] && git cat-file -e "$prev^{commit}" 2>/dev/null; then
+				total=$(git log --oneline "$prev"..FETCH_HEAD -- target package include config toolchain scripts 2>/dev/null | wc -l)
+				if [ "$total" -eq 0 ]; then
+					echo "- 上游 target/package 层无变更"
+				else
+					git log --pretty="format:- %h %s" "$prev"..FETCH_HEAD -- target package include config toolchain scripts 2>/dev/null | head -40
+					if [ "$total" -gt 40 ]; then echo; echo "- ……（共 $total 条，只列前 40）"; fi
+				fi
+			else
+				echo "- 首次建立基线（上游 HEAD: $(git rev-parse --short FETCH_HEAD 2>/dev/null || echo unknown)），下次构建起自动对比"
+			fi
+			echo "$UPFETCH" > .upstream-state
+		fi
 	echo
 	echo "## apk 源"
 	echo "- 分支：https://github.com/${REPO_SLUG}/tree/apk-repo"
