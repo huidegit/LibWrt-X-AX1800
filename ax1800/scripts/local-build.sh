@@ -164,6 +164,19 @@ nkm=$(grep -c '^CONFIG_PACKAGE_kmod-.*=m$' .config || true)
 echo "ALL_KMODS 生效：$nkm 个 kmod 以 =m 参与编译"
 [ "$nkm" -gt 800 ] || { echo "[x] ALL_KMODS 没生效（只看到 $nkm 个 kmod=m）" >&2; exit 1; }
 
+# DEFAULT 包降级检查：target 默认包若被 ALL_KMODS 压成 =m（编出不装），
+# 依赖它们的 =y 包会连带降级（BUG#2：sqm-scripts-nss 整链消失的真根因）。
+# 有任何降级直接红构建——要么显式给该 kmod =y，要么从 target 默认里去掉。
+grep -oP '^CONFIG_DEFAULT_\K[a-z0-9.-]+(?==y)' .config | sort > /tmp/def-y.txt
+grep -oP '^CONFIG_PACKAGE_\K[a-z0-9.-]+(?==y)' .config | sort > /tmp/pkg-y.txt
+demoted=$(comm -23 /tmp/def-y.txt /tmp/pkg-y.txt | tr '\n' ' ')
+if [ -n "$demoted" ]; then
+	echo "[x] 以下 target 默认包被降级（=m，未进固件）：$demoted" >&2
+	echo "    修复：在 packages.config/kernel-dae.config 里给对应包显式 =y" >&2
+	exit 1
+fi
+echo "[+] DEFAULT 包降级检查通过（无静默降级）"
+
 # ---------- 3. 注入 root 密码 ----------
 step "3. 注入 root 密码"
 # 按用户决定：默认 root/root，刷机后自己改。'root' 无特殊字符，sed 直接换。
