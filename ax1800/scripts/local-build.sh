@@ -66,6 +66,9 @@ if [ -f ax1800/config/feeds.lock.json ]; then
 	for name in $(python3 -c "import json;print(' '.join(k for k in json.load(open('ax1800/config/feeds.lock.json')) if not k.startswith('_')))"); do
 		sha=$(python3 -c "import json;print(json.load(open('ax1800/config/feeds.lock.json'))['$name'])")
 		if [ -d "feeds/$name" ]; then
+			# 浅克隆在 update（pull）之后，旧 SHA 的对象可能已不在本地——
+			# 先按 SHA 精确 fetch 再 checkout，钉子才能真正生效
+			git -C "feeds/$name" fetch --depth 1 origin "$sha" >/dev/null 2>&1 || true
 			git -C "feeds/$name" checkout -q "$sha" 2>/dev/null && echo "  $name → $sha" \
 				|| echo "[w] $name 钉到 $sha 失败（feed 缺失或 sha 无效），保持浮动"
 		fi
@@ -223,6 +226,20 @@ echo "manifest: $(wc -l < "$man") 个包"
 		grep -q "^$p " "$man" || { echo "[x] 固件里没有 $p" >&2; exit 1; }
 	done
 	echo "[+] 关键包都在（含 PassWall 全套依赖）"
+
+	# ---------- SQM 断言（真机 2026-11-08 发现的静默降级）----------
+	# 普通版 sqm-scripts 在装而 NSS 版 sqm-scripts-nss 不在 = nss_packages/sqm_scripts_nss
+	# feed 缺 kmod-qca-nss-drv-qdisc（生态结构性缺口，sqm-scripts-nss 被降级成 =m 不安装），
+	# NSS 硬件 SQM 不可用。默认红构建逼人工确认；ALLOW_SQM_MISSING=1 显式放行。
+	if grep -q "^sqm-scripts " "$man" && ! grep -q "^sqm-scripts-nss " "$man"; then
+		if [ "${ALLOW_SQM_MISSING:-0}" != "1" ]; then
+			echo "[x] 固件装了普通 sqm-scripts 但没有 sqm-scripts-nss" >&2
+			echo "    根因：laipeng668 feed 缺 kmod-qca-nss-drv-qdisc（qdisc kmod 生态缺口）" >&2
+			echo "    软件版 SQM 会把流量拉出 NSS 快路径。如接受此代价：ALLOW_SQM_MISSING=1 重跑" >&2
+			exit 1
+		fi
+		echo "[w] SQM NSS 版缺失，已按 ALLOW_SQM_MISSING=1 放行（软件 SQM 会脱离 NSS 快路径）"
+	fi
 
 	# ---------- 镜像内容自检（natserver 同款）：解包 sysupgrade 的 squashfs 清单，
 	# 验证关键文件真的进了 rootfs——manifest 只证明"包被装了"，这里证明"文件在镜像里"。

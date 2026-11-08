@@ -91,6 +91,14 @@ while uci -q get "wireless.@wifi-device[$i]" >/dev/null 2>&1; do
 		5g)
 			# 5G 跑 HE80：160MHz 在 IPQ6000 上受 DFS/干扰影响，实测更差
 			uci set "wireless.@wifi-device[$i].htmode=HE80" 2>/dev/null
+			# 受限 ACS：候选限在非 DFS 集合（真机 2026-11-08 实测 auto 会落在
+			# DFS 信道 60，不支持 DFS 的手机/网卡完全看不到 5G SSID）。
+			# channels 是 list 选项：先清再逐条 add_list，保证重跑幂等。
+			uci -q delete "wireless.@wifi-device[$i].channels" 2>/dev/null
+			uci add_list "wireless.@wifi-device[$i].channels=149" 2>/dev/null
+			uci add_list "wireless.@wifi-device[$i].channels=153" 2>/dev/null
+			uci add_list "wireless.@wifi-device[$i].channels=157" 2>/dev/null
+			uci add_list "wireless.@wifi-device[$i].channels=161" 2>/dev/null
 			;;
 	esac
 	i=$((i + 1))

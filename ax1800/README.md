@@ -190,6 +190,8 @@ apk 每次装/卸/升级事务结束都会解析 `/etc/apk/world`（全部已装
 - **这棵树的 `scripts/feeds` 不支持 `src-git url;<sha>` 直拼**——会把 SHA 当分支名 clone 失败；先 update 再 `git -C feeds/<name> checkout <sha>`（local-build.sh 已按此写）
 - WSL2 编译两个坑：① 默认 root 下 GNU tar 拒绝 configure，需 `FORCE_UNSAFE_CONFIGURE=1`（脚本已内置）；② WSL 会把 Windows PATH 追加进来，rust 安装的 `find -execdir` 检测到带空格的非纯路径直接拒绝——脚本已把 PATH 洗成纯 Linux
 - PassWall 的 xray/sing-box 核心运行时由它在 LuCI 里自己下载（走 GitHub，网络不稳时多试）
+- **sqm-scripts-nss 装不上（生态缺口，2026-11-08 真机确认）**：它依赖的 `kmod-qca-nss-drv-qdisc` 在 laipeng668 的 feed 里不存在（qdisc kmod 是 qca-nss-clients 的补丁产物，当前 NSS-LibWrt 分支没打），构建时被 defconfig 降级成 `=m`（编出但不装），普通版 `sqm-scripts` 顶替进固件。构建脚本有红构建断言（`ALLOW_SQM_MISSING=1` 可显式放行）。**修复落地前别在 LuCI 开 SQM**——软件限速会把流量拉出 NSS 快路径还额外吃 CPU
+- **default-settings-chn 会覆盖首启配置**：它按字典序排在 `99-ax1800` 之后执行，会重写 `dhcp.lan`（IPv6 RA/DHCPv6）和 `luci.main.lang`。已有 `zz-ax1800`（字典序最后）在其后重放设计值（IPv6 + 中文语言 + usteer 菜单汉化）
 - **本仓库本地构建链的 WSL 专属坑（local-build.sh 已内置处理）**：root 下 GNU tar 拒绝 configure（`FORCE_UNSAFE_CONFIGURE=1`）；WSL 会把 Windows PATH 追加进来导致 rust 安装的 `find -execdir` 拒绝执行（脚本把 PATH 洗成纯 Linux）；codelinaro 重写过历史，nss_packages git 型包的锁定哈希对不上（脚本剥掉 `PKG_MIRROR_HASH`）；`scripts/feeds` 不支持 `;sha` 直拼（update 后手动 checkout）；WSL 的 `/tmp` 是 tmpfs，虚拟机空闲关机即清空（持久产物放 `/root`）
 
 ## 借鉴来源

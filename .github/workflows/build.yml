@@ -268,6 +268,12 @@ jobs:
                    kmod-qca-nss-drv kmod-qca-nss-ecm ipq-wifi-jdcloud_re-ss-01 kmod-ath11k; do
             grep -q "^$p " "$man" || { echo "::error::固件里没有 $p"; exit 1; }
           done
+          # SQM 断言（真机 2026-11-08 发现的静默降级）：普通版顶替 NSS 版 =
+          # feed 缺 kmod-qca-nss-drv-qdisc，NSS 硬件 SQM 不可用——红构建逼人工确认
+          if grep -q "^sqm-scripts " "$man" && ! grep -q "^sqm-scripts-nss " "$man"; then
+            echo "::error::固件装了普通 sqm-scripts 但没有 sqm-scripts-nss（feed 缺 kmod-qca-nss-drv-qdisc，NSS 硬件 SQM 不可用）"
+            exit 1
+          fi
           echo "[+] 关键包都在"
 
       - name: 发布 apk 源到 apk-repo 分支
