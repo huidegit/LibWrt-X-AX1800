@@ -17,6 +17,10 @@
 # 编完后的推送/发布在 Windows 侧做（见脚本结尾打印的命令）。
 set -eu
 
+# WSL 默认把 Windows 的 PATH 追加进来（含带空格的 'Program Files\...' 条目），
+# rust 安装步骤的 find -execdir 检测到非纯路径会直接拒绝执行。构建期间只用 Linux 原生路径。
+export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
 KS="${1:-12288}"
 case "$KS" in
 	6144|12288) ;;
