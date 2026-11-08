@@ -46,9 +46,9 @@
 | 项 | 值 |
 |---|---|
 | 管理地址 | `192.168.1.1` |
-| 账号 / 密码 | `root` / `root`（可用仓库 Secret `ROOT_PASSWORD` 覆盖） |
+| 账号 / 密码 | `root` / `root`（**固定值，刷完第一件事改掉**） |
 | WiFi | 双频合一，SSID `CLI`，加密 `sae-mixed`（WPA2-PSK + WPA3-SAE 混合），密码 `12345678` |
-| 无线参数 | 2.4G `HT20`、5G `HE80`、`channel=auto`、`country=CN`、11k/11v 开、11r 关 |
+| 无线参数 | 2.4G `HE20`（保 20MHz 又不丢 WiFi6）、5G `HE80`、`channel=auto`、`country=CN`、11k/11v 开、11r 关 |
 | WAN | **DHCP**（拨号命令见下） |
 | IPv6 | LAN 侧已开（`ip6assign=60` + RA/DHCPv6 server），`wan6=dhcpv6` |
 | 主题 | argon 3.x |
@@ -71,48 +71,20 @@ uci commit network && /etc/init.d/network restart
 ## 自动构建与发布
 
 ```
-每天 03:00  sync-upstream.yml   比对上游 HEAD → 有变化就 merge 并触发构建
+本地（当前主用）  local-build.sh   feeds → 配置 → 编译 → 校验 → 差分打包 apk 源
       ↓
-        build.yml               装依赖 → feeds → argon 3.x → 合并配置 → 编 12M
-                                → 校验 FIT/hsqs/manifest → 发 Release
+Windows 侧        git push apk-repo 分支 + gh release create
 ```
 
-- **同步是 merge，不是 `gh repo sync`** —— 后者会把 `ax1800/` 下的提交冲掉。
-- 上游提交只增不改，冲突只可能出现在根 `README.md`（本地版本优先）。
-- `.upstream-state` 记录「已成功构建的上游 SHA」；构建失败不写，第二天自动重试。
-- Release 正文自动生成三段：上游更新（`git log prev..HEAD -- target package include config toolchain`）、
-  本次固件体积与包数、刷写说明。
-
-### 手动触发
-
-Actions → **Build AX1800 12M** → Run workflow，`kernel_size` 默认 `12288`（12M 表）。
-
-### 本地编译
-
-```sh
-git clone --depth 1 -b 25.12-nss https://github.com/Living877/LibWrt-X-AX1800.git
-cd LibWrt-X-AX1800
-
-cp feeds.conf.default feeds.conf
-./scripts/feeds update -a && ./scripts/feeds install -a
-echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
-./scripts/feeds update -p istore
-./scripts/feeds install -p istore luci-app-store luci-lib-taskd taskd luci-lib-xterm
-
-./scripts/feeds uninstall luci-theme-argon luci-app-argon-config || true
-rm -rf package/luci-theme-argon
-git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon package/luci-theme-argon
-
-cat ax1800/config/device.config ax1800/config/repos.config \
-    ax1800/config/packages.config ax1800/config/packages-store.config \
-    ax1800/config/kernel-dae.config >> .config
-sh ax1800/scripts/set-kernel-size.sh 12288
-mkdir -p files && cp -Rf ax1800/files/. files/
-
-make defconfig
-make download -j$(nproc) && find dl -size -1024c -delete
-make -j$(nproc)
-```
+- **本地构建（WSL2）为主**：`sh ax1800/scripts/local-build.sh 12288`，一条龙到出镜像和
+  apk-repo 打包；推送/发布在 Windows 侧执行（命令脚本结尾会打印）。详见
+  **[ax1800/README.md](ax1800/README.md#构建)**。
+- **GitHub Actions（备用）**：大号 Actions 账单锁定期间不可用；恢复后手动触发
+  Actions → **Build AX1800 12M**（`kernel_size` 默认 `12288`）。
+- **sync-upstream.yml 已暂停**每日自动同步与构建派发（账单锁定期间空跑无意义），
+  恢复方法见该文件内注释。
+- `.upstream-state` 记录「已成功构建的上游 SHA」；构建失败不写，下次自动重试。
+- Release 正文自动生成：本次固件体积与包数、apk 源地址、刷写说明。
 
 产物 `bin/targets/qualcommax/ipq60xx/*factory.bin`（U-Boot `/firmware.html`）与 `*sysupgrade.bin`。
 
@@ -129,8 +101,8 @@ make -j$(nproc)
 | openwrt snapshots | 9,798 |
 | `dl.openwrt.ai` | 只有 `.ipk`，apk 固件用不了 |
 
-约束：**kmod 不能在线装**（apk 卡 `kernel (= 完整版本串)`，自编固件 vermagic 不同）；
-`nss_packages` / `sqm_scripts_nss` 是 CI 现编的，没有在线镜像。
+约束与解法：自编内核的 kmod 与 NSS 私有包任何官方源都没有（官方 buildbot 同病）——
+**解法见下节自建 apk 源**，`kmod-*` 从自建源装（内核哈希对得上），用户空间包走官方活源。
 
 ---
 
@@ -141,12 +113,13 @@ ax1800/
   README.md              构建与首启说明
   device-partitions.md   设备与分区事实底稿
   plugin-catalog.md      插件清单（用途/依赖/注意事项）
-  config/                配置片段（机型、包、iStore、dae 内核、软件源）
-  files/                 rootfs 覆盖层（首启脚本 / apk world 裁剪）
-  scripts/               12M 内核分区改写
+  config/                配置片段（机型、包、iStore、dae 内核、软件源、自建源开关）
+  files/                 rootfs 覆盖层（首启脚本 / rc.local 源自愈）
+  scripts/               set-kernel-size.sh（12M 内核分区改写）
+                         local-build.sh（本地一键构建，WSL2）
 .github/workflows/
-  build.yml              构建 + 校验 + 自动发布
-  sync-upstream.yml      每天同步上游并触发构建
+  build.yml              构建 + 校验 + apk 源差分发布（Actions 备用）
+  sync-upstream.yml      上游同步（已暂停，见文件内注释）
 ```
 
 ## 已知坑
@@ -167,15 +140,15 @@ ax1800/
 固件里 166 个 `kmod-*` 绑死本机内核哈希（`kernel=6.12.112~7b482d99…`），公共源里永远没有这一份，
 apk 每次事务都会记 1 个 error。根治办法是自己发源：
 
-- CI 编译完后，从 `bin/targets/qualcommax/ipq60xx/packages/` 里挑出 `kmod-*` 和 `kernel-*`
+- 构建完成后（本地 `local-build.sh` 或 CI），从 `bin/targets/qualcommax/ipq60xx/packages/` 里挑出 `kmod-*` 和 `kernel-*`
   两类包（本地 `make` 不生成 `kmods/<内核版本>/`，那种分层只有官方 buildbot 才有，
   全量产物都平铺在 `packages/` 下），用 `apk mkndx` 重新打索引，force-push 到本仓库的
   `apk-repo` 分支。每次一个孤儿提交，历史永远只有 1 个 commit，不会把仓库撑爆。
 - kmod 是**全编**的（`CONFIG_ALL_KMODS=y`，约 1100 个、合计 45 MB 上下）。产物是 `m`——编出来
   但不装进 rootfs，所以镜像体积不变，而任何插件的 kmod 依赖都能从 `apk-repo` 装上。普通软件包
   仍走 distfeeds 里的官方源。
-- 固件构建时自动生成 `/etc/apk/repositories.d/00-ax1800.list`，指向
-  `https://raw.githubusercontent.com/<owner>/<repo>/apk-repo/target/packages.adb` 和
+- 固件构建时自动生成 `/etc/apk/repositories.d/00-ax1800.list`，指向（**写死大号，不再用变量**）：
+  `https://raw.githubusercontent.com/huidegit/LibWrt-X-AX1800/apk-repo/target/packages.adb` 和
   `.../apk-repo/kmods/packages.adb`。
 - 用 raw 不用 Release：Releases 会 302 到 `objects.githubusercontent.com`，apk 不跟跨域跳转，
   会重演 `mirrors.vsean.net` 那个 `wget: exited with error 8`。
@@ -185,15 +158,16 @@ apk 每次事务都会记 1 个 error。根治办法是自己发源：
 **不支持** `--sign`，那个 `--sign` 只是全局 `--sign-key` 的缩写，只加载密钥、不产出签名，
 所以必须再跑一次 `adbsign`；而且 `adbsign` 读入索引时也要过 adb 校验，必须带 `--allow-untrusted`，
 否则会打印 `ERROR: packages.adb: UNTRUSTED signature` 然后原样退出（返回码还是 0）。
-公钥由 base-files 装进镜像，同时随源一起发布。私钥放仓库 Secret：
+公钥由 base-files 装进镜像，同时随源一起发布。私钥：**本地构建放树根 `private-key.pem`**
+（gitignored，绝不入库；也可用环境变量 `APK_SIGNING_KEY_FILE` 指路），CI 构建则放仓库
+Secret `APK_SIGNING_KEY`。私钥必须跨构建复用，否则：
 
 ```sh
-openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem
-gh secret set APK_SIGNING_KEY --repo <owner>/<repo> < private-key.pem
+openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem   # 仅首次生成
 ```
 
-没配 Secret 时构建会现生成一把，镜像和源仍然自洽；但下次重新构建后，之前刷的旧镜像就不认新源了
-（表现为 `apk update` 报 UNTRUSTED signature）。
+换新钥后，之前刷的旧镜像就不认新源了（表现为 `apk update` 报 UNTRUSTED signature），
+必须重刷固件。
 
 验证：`apk update` 应看到多出两条 raw 源、退出码 0；`apk add -s luci-base` 退出码 0，
 不再出现 `The following packages are no longer available from a repository`。
