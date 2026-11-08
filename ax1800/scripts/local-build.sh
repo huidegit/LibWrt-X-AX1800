@@ -169,13 +169,18 @@ echo "ALL_KMODS 生效：$nkm 个 kmod 以 =m 参与编译"
 # 有任何降级直接红构建——要么显式给该 kmod =y，要么从 target 默认里去掉。
 grep -oP '^CONFIG_DEFAULT_\K[a-z0-9.-]+(?==y)' .config | sort > /tmp/def-y.txt
 grep -oP '^CONFIG_PACKAGE_\K[a-z0-9.-]+(?==y)' .config | sort > /tmp/pkg-y.txt
-demoted=$(comm -23 /tmp/def-y.txt /tmp/pkg-y.txt | tr '\n' ' ')
-if [ -n "$demoted" ]; then
-	echo "[x] 以下 target 默认包被降级（=m，未进固件）：$demoted" >&2
-	echo "    修复：在 packages.config/kernel-dae.config 里给对应包显式 =y" >&2
+# 严重性分层：kmod-* 降级 = 红构建（自编内核的 kmod 运行时装不上，必须根治）；
+# 用户空间包降级 = 黄警告（可事后从官方源装，PROVIDES 变体关系也会触发名字比对）
+demoted=$(comm -23 /tmp/def-y.txt /tmp/pkg-y.txt)
+kd=$(echo "$demoted" | grep '^kmod-' | tr '\n' ' ')
+usr=$(echo "$demoted" | grep -v '^kmod-' | tr '\n' ' ')
+if [ -n "$kd" ]; then
+	echo "[x] 以下 target 默认 KMOD 被降级（=m，NSS 子模块链断）：$kd" >&2
+	echo "    修复：给对应 kmod 显式 =y（参照 kernel-dae.config 的 qdisc 案例）" >&2
 	exit 1
 fi
-echo "[+] DEFAULT 包降级检查通过（无静默降级）"
+[ -n "$usr" ] && echo "[w] 用户空间默认包未以 =y 进固件（可运行时安装）：$usr"
+echo "[+] DEFAULT 包降级检查通过（kmod 无降级）"
 
 # ---------- 3. 注入 root 密码 ----------
 step "3. 注入 root 密码"
