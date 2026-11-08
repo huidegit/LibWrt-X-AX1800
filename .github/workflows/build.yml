@@ -87,6 +87,12 @@ jobs:
             || test -f package/feeds/passwall/luci-app-passwall/Makefile \
             || { echo "::error::luci-app-passwall 没装上（哪个 feed 里都没有）"; exit 1; }
           echo "[+] luci-app-passwall 来自: $(ls -d package/feeds/*/luci-app-passwall)"
+          # nss_packages 的 git 型包从 codelinaro 拉源码，上游会重写历史，锁定的
+          # PKG_MIRROR_HASH 对不上重新生成的归档（2026-11-08 qca-nss-drv 实测）。
+          # 本地生成+本地校验，剥掉锁定哈希。
+          for m in feeds/nss_packages/*/Makefile; do
+            grep -q '^PKG_SOURCE_PROTO:=git' "$m" && sed -i '/^PKG_MIRROR_HASH:=/d' "$m"
+          done
 
           echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
           ./scripts/feeds update istore

@@ -26,6 +26,8 @@ case "$KS" in
 	6144|12288) ;;
 	*) echo "[x] 内核分区只支持 6144 或 12288（当前 '$KS'）" >&2; exit 1 ;;
 esac
+# 退出码自写文件：外层 wsl.exe 的 $? 中转不可靠，脚本自己落地退出码
+trap 'echo $? > "$PWD/.build-exit"' EXIT
 REPO_SLUG="huidegit/LibWrt-X-AX1800"
 export TZ=Asia/Shanghai
 # 本地以 root 运行（WSL 默认），GNU tar 的 configure 会拒绝 root 并要求显式放行；
@@ -61,6 +63,14 @@ test -f package/feeds/luci/luci-app-passwall/Makefile \
 	|| test -f package/feeds/passwall/luci-app-passwall/Makefile \
 	|| { echo "[x] luci-app-passwall 没装上（哪个 feed 里都没有）" >&2; exit 1; }
 echo "[+] luci-app-passwall 来自: $(ls -d package/feeds/*/luci-app-passwall)"
+
+# nss_packages 的 git 型包从 codelinaro（高通 QSDK 镜像）拉源码，上游会重写历史，
+# feed 里锁定的 PKG_MIRROR_HASH 与本地重新生成的归档对不上（2026-11-08 实测
+# qca-nss-drv Hash mismatch）。本地生成+本地使用，剥掉这些锁定哈希以信任当前源码。
+for m in feeds/nss_packages/*/Makefile; do
+	grep -q '^PKG_SOURCE_PROTO:=git' "$m" && sed -i '/^PKG_MIRROR_HASH:=/d' "$m"
+done
+echo "[+] nss_packages 的锁定哈希已剥离（git 型包）"
 
 echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
 ./scripts/feeds update istore
