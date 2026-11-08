@@ -88,9 +88,12 @@ jobs:
             || { echo "::error::luci-app-passwall 没装上（哪个 feed 里都没有）"; exit 1; }
           echo "[+] luci-app-passwall 来自: $(ls -d package/feeds/*/luci-app-passwall)"
 
-          echo 'src-git istore https://github.com/linkease/istore.git;a97ace34f2da358a015b094d326bba2697697f2e' >> feeds.conf
-          ./scripts/feeds update -p istore
+          echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
+          ./scripts/feeds update istore
+          # 这棵树的 scripts/feeds 不支持 ;<sha> 直拼（会被当分支名 clone 失败），更新后手动钉住
+          git -C feeds/istore checkout -q a97ace34f2da358a015b094d326bba2697697f2e
           ./scripts/feeds install -p istore luci-app-store luci-lib-taskd taskd luci-lib-xterm
+          test -f feeds/istore/luci/luci-app-store/Makefile || { echo "::error::istore feed 内容不对"; exit 1; }
 
           # 3) 主题用 jerrykuku 的 argon 3.x（feed 里是 2.4.7，且 3.x 已把设置页并进主题包）
           #    pin 到固定 commit：master 浮动，上游一次 bad push 就会打挂构建

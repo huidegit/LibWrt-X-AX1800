@@ -55,18 +55,22 @@ test -f package/feeds/luci/luci-app-passwall/Makefile \
 	|| { echo "[x] luci-app-passwall 没装上（哪个 feed 里都没有）" >&2; exit 1; }
 echo "[+] luci-app-passwall 来自: $(ls -d package/feeds/*/luci-app-passwall)"
 
-echo 'src-git istore https://github.com/linkease/istore.git;a97ace34f2da358a015b094d326bba2697697f2e' >> feeds.conf
-./scripts/feeds update -p istore
+echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
+./scripts/feeds update istore
+# 这棵树的 scripts/feeds 不支持 ;<sha> 直拼（会被当分支名 clone 失败），更新后手动钉住
+git -C feeds/istore checkout -q a97ace34f2da358a015b094d326bba2697697f2e
 ./scripts/feeds install -p istore luci-app-store luci-lib-taskd taskd luci-lib-xterm
+test -f feeds/istore/luci/luci-app-store/Makefile || { echo "[x] istore feed 内容不对（luci-app-store 缺失）" >&2; exit 1; }
 
 # 主题用 jerrykuku 的 argon 3.x，pin 到固定 commit（master 浮动会打挂构建）
 ./scripts/feeds uninstall luci-theme-argon luci-app-argon-config || true
 rm -rf package/luci-theme-argon package/luci-app-argon-config
 git init -q package/luci-theme-argon
 git -C package/luci-theme-argon remote add origin https://github.com/jerrykuku/luci-theme-argon.git
-git -C package/luci-theme-argon fetch -q --depth 1 origin c6d63bd68aa9272e40c35cee5e615f45cc1e4eb0
+echo "[i] 拉取 argon pinned commit…"
+git -C package/luci-theme-argon fetch --depth 1 origin c6d63bd68aa9272e40c35cee5e615f45cc1e4eb0
 git -C package/luci-theme-argon checkout -q FETCH_HEAD
-test -f package/luci-theme-argon/Makefile
+test -f package/luci-theme-argon/Makefile || { echo "[x] argon Makefile 缺失" >&2; exit 1; }
 grep -q 'PKG_VERSION:=3' package/luci-theme-argon/Makefile
 echo "[+] argon 3.x 已就位（pinned）"
 
