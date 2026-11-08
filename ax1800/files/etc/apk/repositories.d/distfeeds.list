@@ -1,0 +1,13 @@
+# 静态 distfeeds 覆盖（BUG#5 修复，2026-11-08）
+# files 覆盖层天然替换包内默认模板——本文件替换 default-settings-chn 生成的
+# distfeeds.list，剔除 2 条指向 immortalwrt 服务器的 passwall 死源
+# （该服务器不发布 passwall 源，apk update 每次报 wget error 8 / 2 unavailable）。
+# 注意：00-ax1800.list（自建源）与 compat.list（iStore）是独立文件，不受影响。
+# 自建源的 2 条在 00-ax1800.list，compat 在 compat.list。
+
+https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/targets/qualcommax/ipq60xx/packages/packages.adb
+https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/base/packages.adb
+https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/luci/packages.adb
+https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/packages/packages.adb
+https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/routing/packages.adb
+https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/telephony/packages.adb
