@@ -57,6 +57,21 @@ cp feeds.conf.default feeds.conf
 echo 'src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git' >> feeds.conf
 echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git' >> feeds.conf
 ./scripts/feeds update -a
+
+# feeds.lock：把所有 feed 钉到已知良好提交（构建完全可复现）。
+# 删除 ax1800/config/feeds.lock.json 即恢复浮动更新。
+# 注意：scripts/feeds 的 init 路径不支持 ;<sha> 直拼，所以这里 update 后手动 checkout。
+if [ -f ax1800/config/feeds.lock.json ]; then
+	echo "[i] 应用 feeds.lock 钉子"
+	for name in $(python3 -c "import json;print(' '.join(k for k in json.load(open('ax1800/config/feeds.lock.json')) if not k.startswith('_')))"); do
+		sha=$(python3 -c "import json;print(json.load(open('ax1800/config/feeds.lock.json'))['$name'])")
+		if [ -d "feeds/$name" ]; then
+			git -C "feeds/$name" checkout -q "$sha" 2>/dev/null && echo "  $name → $sha" \
+				|| echo "[w] $name 钉到 $sha 失败（feed 缺失或 sha 无效），保持浮动"
+		fi
+	done
+fi
+
 ./scripts/feeds install -a
 # luci feed（immortalwrt）自带 luci-app-passwall，feeds install 会优先装它，两处都认
 test -f package/feeds/luci/luci-app-passwall/Makefile \
@@ -111,6 +126,15 @@ mkdir -p files
 cp -Rf ax1800/files/. files/
 chmod +x files/etc/rc.local files/etc/uci-defaults/*
 test -f files/etc/uci-defaults/99-ax1800
+
+# CRLF 守卫（natserver 同款）：Windows 来源的 \r 会把 init/uci-defaults 的
+# shebang 变成 "#!/bin/sh /etc/rc.common\r"，内核 exec 直接失败、服务全灭。
+find files -type f -print0 | xargs -0 -r sed -i 's/\r$//'
+if grep -rlU "$(printf '\r')" files/etc 2>/dev/null; then
+	echo "[x] files/etc 仍有文件含 CR，固件内脚本将无法执行" >&2
+	exit 1
+fi
+echo "[+] CRLF 守卫通过（files/ 无残留 CR）"
 
 # apk 自建源：写死大号（不再用 ${GITHUB_REPOSITORY}，防止再次指向会被删的仓库）
 mkdir -p files/etc/apk/repositories.d
@@ -191,14 +215,50 @@ echo "[+] 边界正确"
 
 man=$(ls "$T"/*jdcloud_re-ss-01.manifest | head -1)
 echo "manifest: $(wc -l < "$man") 个包"
-for p in luci-theme-argon luci-app-store luci-app-openclash luci-app-usteer \
-         luci-app-passwall luci-app-autoreboot luci-app-samba4 luci-app-diskman \
-         kmod-nft-fullcone kmod-nft-socket kmod-netlink-diag kmod-ipt-nat \
-         kmod-usb-storage kmod-fs-ntfs3 \
-         kmod-qca-nss-drv kmod-qca-nss-ecm ipq-wifi-jdcloud_re-ss-01 kmod-ath11k; do
-	grep -q "^$p " "$man" || { echo "[x] 固件里没有 $p" >&2; exit 1; }
-done
-echo "[+] 关键包都在（含 PassWall 全套依赖）"
+	for p in luci-theme-argon luci-app-store luci-app-openclash luci-app-usteer \
+	         luci-app-passwall luci-app-autoreboot luci-app-samba4 luci-app-diskman \
+	         kmod-nft-fullcone kmod-nft-socket kmod-netlink-diag kmod-ipt-nat \
+	         kmod-usb-storage kmod-fs-ntfs3 \
+	         kmod-qca-nss-drv kmod-qca-nss-ecm ipq-wifi-jdcloud_re-ss-01 kmod-ath11k; do
+		grep -q "^$p " "$man" || { echo "[x] 固件里没有 $p" >&2; exit 1; }
+	done
+	echo "[+] 关键包都在（含 PassWall 全套依赖）"
+
+	# ---------- 镜像内容自检（natserver 同款）：解包 sysupgrade 的 squashfs 清单，
+	# 验证关键文件真的进了 rootfs——manifest 只证明"包被装了"，这里证明"文件在镜像里"。
+	# 注意：unsquashfs 只用 -l 清单模式（只读、无副作用、重跑不 FATAL）。
+	if command -v unsquashfs >/dev/null 2>&1; then
+		IMG=$(ls "$T"/*jdcloud*squashfs-sysupgrade.bin | head -1)
+		WORK=$(mktemp -d)
+		SQ="$IMG"
+		if ! unsquashfs -s "$SQ" >/dev/null 2>&1; then
+			OFF=$(grep -abo 'hsqs' "$SQ" | head -1 | cut -d: -f1)
+			[ -n "$OFF" ] && { tail -c +$((OFF + 1)) "$SQ" > "$WORK/root.sqsh"; SQ="$WORK/root.sqsh"; }
+		fi
+		LIST="$WORK/list.txt"
+		unsquashfs -l "$SQ" 2>/dev/null | sed 's,^squashfs-root/*,,' | awk 'NF{print $1}' | sort -u > "$LIST" || true
+		N=$(wc -l < "$LIST")
+		echo "[i] rootfs 条目数: $N"
+		if [ "$N" -lt 100 ]; then
+			echo "[w] squashfs 清单读取不可靠（条目 $N），跳过内容自检"
+		else
+			FAIL=0
+			for fp in etc/uci-defaults/99-ax1800 etc/rc.local \
+			          etc/apk/repositories.d/00-ax1800.list \
+			          etc/init.d/passwall www/luci-static/argon; do
+				if grep -qxF "$fp" "$LIST"; then echo "  ok   /$fp"; else echo "  MISSING /$fp"; FAIL=1; fi
+			done
+			# 源地址内容断言：解出 00-ax1800.list，验证写死的大号 URL 真的进了镜像
+			unsquashfs -no-progress -q -d "$WORK/x" "$SQ" etc/apk/repositories.d/00-ax1800.list >/dev/null 2>&1
+			grep -q "huidegit/LibWrt-X-AX1800" "$WORK/x/etc/apk/repositories.d/00-ax1800.list" 2>/dev/null \
+				|| { echo "[x] 00-ax1800.list 内容不对（大号 URL 缺失）" >&2; FAIL=1; }
+			[ "$FAIL" -eq 0 ] || { echo "[x] 镜像内容自检失败" >&2; exit 1; }
+			echo "[+] 镜像内容自检通过（关键文件 + 源地址内容）"
+		fi
+		rm -rf "$WORK"
+	else
+		echo "[w] 无 unsquashfs，跳过镜像内容自检"
+	fi
 
 # ---------- 8. 准备 apk 源（apk-repo-out，稍后从 Windows 侧推送）----------
 step "8. 准备 apk 源"
@@ -305,6 +365,8 @@ gitsha=$(git rev-parse --short HEAD 2>/dev/null || echo local)
 	echo "## 本次固件"
 	echo "- 内核 $kver，内核分区 ${KS}k，FIT ${fit} 字节，固件包 $(wc -l < "$man") 个"
 	echo "- 基于 commit \`$gitsha\`（本地构建 $(date +%Y-%m-%d)）"
+	up=$(git ls-remote https://github.com/LiBwrt/LibWrt.git refs/heads/25.12-nss 2>/dev/null | awk '{print $1}' | cut -c1-12)
+	[ -n "$up" ] && echo "- 上游基线: $up"
 	echo "- PassWall 已内置；全量 kmod 见 apk 源"
 	echo
 	echo "## apk 源"

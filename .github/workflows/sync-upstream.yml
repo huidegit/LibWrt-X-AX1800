@@ -45,6 +45,14 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "上游 ${up:0:8} ≠ 已构建 ${state:0:8}，需要合并"
+            # 双保险（natserver 同款）：.upstream-state 若曾丢失，检查 Release 里
+            # 是否已包含该上游短 SHA，避免对同一上游版本重复构建
+            short=$(echo "$up" | cut -c1-12)
+            if gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                 --jq '[.[] | .name + " " + (.body // "")] | join(" ")' 2>/dev/null | grep -q "$short"; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "上游 $short 已有对应 Release（.upstream-state 记录丢失），跳过重复构建"
+            fi
           fi
 
       - name: 合并上游

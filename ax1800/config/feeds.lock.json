@@ -1,0 +1,13 @@
+{
+  "_说明": "feed 钉子：把所有 feed 锁到已知良好提交，构建完全可复现。删除本文件即恢复浮动更新。基线：2026-11-08 成功构建（Release ax1800-20261108-local1 同期）。",
+  "nss_packages": "8b7ea5181762",
+  "sqm_scripts_nss": "4b4ed8639229",
+  "packages": "395ca4d2df47",
+  "luci": "319f7c96e353",
+  "routing": "ea8633da9c46",
+  "telephony": "9bcb6d71db03",
+  "passwall": "f19da5433042",
+  "passwall_packages": "da712cf06cf4",
+  "istore": "a97ace34f2da",
+  "argon": "c6d63bd68aa9"
+}

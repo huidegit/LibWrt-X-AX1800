@@ -137,6 +137,13 @@ jobs:
           # git 不保证保留可执行位，这里显式补上，否则 /etc/rc.local 不会被 /etc/init.d/done 执行
           chmod +x files/etc/rc.local files/etc/uci-defaults/*
           test -f files/etc/uci-defaults/99-ax1800
+          # CRLF 守卫（natserver 同款）：init 脚本带 \r 会把 shebang 变成
+          # "#!/bin/sh /etc/rc.common\r"，内核 exec 直接失败、服务全灭
+          find files -type f -print0 | xargs -0 -r sed -i 's/\r$//'
+          if grep -rlU "$(printf '\r')" files/etc; then
+            echo "::error::files/etc 仍有文件含 CR，固件内脚本将无法执行"
+            exit 1
+          fi
           # apk 自建源：raw 直链，200 直出、不跳转（Releases 会 302 到 objects.githubusercontent.com，apk 不跟）
           mkdir -p files/etc/apk/repositories.d
           {
@@ -214,21 +221,14 @@ jobs:
             echo "::warning::没配 APK_SIGNING_KEY，本次构建现生成密钥；以后重刷固件，旧镜像将不信任新的 apk-repo"
           fi
 
-      - name: 缓存 staging_dir
-        uses: actions/cache@v4
+      - name: 缓存工具链与构建输出 (cachewrtbuild)
+        # EmptyGhost 同款：专用 OpenWrt 构建缓存 action，比手搓 staging_dir 缓存
+        # 更聪明（自动处理 stamp 时间戳、增量失效），账号解锁恢复 CI 后直接受益
+        uses: HiGarfield/cachewrtbuild@main
         with:
-          key: staging-${{ github.sha }}-${{ inputs.kernel_size || '12288' }}
-          restore-keys: |
-            staging-
-          path: staging_dir
-
-      - name: 刷新缓存时间戳
-        run: |
-          if [ -d staging_dir ]; then
-            find staging_dir -type d -name stamp -not -path '*target*' | while read -r d; do
-              find "$d" -type f -exec touch {} +
-            done
-          fi
+          ccache: false
+          prefix: ax1800
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 预下载依赖
         run: |
