@@ -27,15 +27,23 @@ gh release create "$TAG" --repo "$REPO_SLUG" \
 	|| gh release edit "$TAG" --repo "$REPO_SLUG" \
 		--title "AX1800 本地构建（持续更新）" --notes-file "$NOTES"
 
-echo "[3/3] 上传资产（--clobber 覆盖旧资产）…"
+echo "[3/3] 上传资产（--clobber 覆盖旧资产；大文件易被代理掐断，逐个重试）…"
 rm -rf assets-push && mkdir assets-push
 cp "$T"/*factory.bin "$T"/*sysupgrade.bin "$T"/*.manifest "$T/sha256sums" assets-push/
 cd assets-push
-gh release upload "$TAG" --repo "$REPO_SLUG" --clobber \
-	libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01-squashfs-factory.bin \
-	libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01-squashfs-sysupgrade.bin \
-	libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01.manifest \
-	sha256sums
+for f in libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01-squashfs-factory.bin \
+         libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01-squashfs-sysupgrade.bin \
+         libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01.manifest \
+         sha256sums; do
+	ok=0
+	for i in 1 2 3 4 5; do
+		if gh release upload "$TAG" --repo "$REPO_SLUG" --clobber "$f" 2>/dev/null; then
+			echo "  ✓ $f（第 $i 次）"; ok=1; break
+		fi
+		sleep 6
+	done
+	[ "$ok" -eq 1 ] || { echo "[x] $f 重试 5 次仍失败" >&2; exit 1; }
+done
 cd ..
 
 echo
