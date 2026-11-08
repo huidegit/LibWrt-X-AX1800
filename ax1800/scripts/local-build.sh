@@ -24,6 +24,9 @@ case "$KS" in
 esac
 REPO_SLUG="huidegit/LibWrt-X-AX1800"
 export TZ=Asia/Shanghai
+# 本地以 root 运行（WSL 默认），GNU tar 的 configure 会拒绝 root 并要求显式放行；
+# CI 是非 root 用户所以从没触发过这条
+export FORCE_UNSAFE_CONFIGURE=1
 
 step() { echo; echo "========== [$(date +%H:%M:%S)] $* =========="; }
 
