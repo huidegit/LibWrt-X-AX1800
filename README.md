@@ -71,13 +71,15 @@ uci commit network && /etc/init.d/network restart
 ## 自动构建与发布
 
 ```
-本地（当前主用）  local-build.sh   feeds → 配置 → 编译 → 校验 → 差分打包 apk 源
+WSL2（当前主用）  local-build.sh   feeds(lock 钉子) → 配置 → 编译 → 校验 → 差分打包 apk 源
       ↓
-Windows 侧        git push apk-repo 分支 + gh release create
+Windows 侧        publish.sh       推 apk-repo 分支 + 单条目 Release（tag 固定 ax1800-local）
 ```
 
 - **本地构建（WSL2）为主**：`sh ax1800/scripts/local-build.sh 12288`，一条龙到出镜像和
-  apk-repo 打包；推送/发布在 Windows 侧执行（命令脚本结尾会打印）。详见
+  apk-repo 打包（含 CRLF 守卫、镜像内容自检、feeds.lock 钉子）。
+- **发布**：`sh ax1800/scripts/publish.sh`（Windows Git Bash）——推 apk-repo 分支 +
+  创建/更新固定条目 `ax1800-local`（资产覆盖，不刷屏）。详见
   **[ax1800/README.md](ax1800/README.md#构建)**。
 - **GitHub Actions（备用）**：大号 Actions 账单锁定期间不可用；恢复后手动触发
   Actions → **Build AX1800 12M**（`kernel_size` 默认 `12288`）。
@@ -113,10 +115,11 @@ ax1800/
   README.md              构建与首启说明
   device-partitions.md   设备与分区事实底稿
   plugin-catalog.md      插件清单（用途/依赖/注意事项）
-  config/                配置片段（机型、包、iStore、dae 内核、软件源、自建源开关）
+  config/                配置片段（机型、包、iStore、dae 内核+1GB 优化、软件源、自建源开关、feeds.lock）
   files/                 rootfs 覆盖层（首启脚本 / rc.local 源自愈）
   scripts/               set-kernel-size.sh（12M 内核分区改写）
                          local-build.sh（本地一键构建，WSL2）
+                         publish.sh（发布：推 apk-repo + 单条目 Release，Windows 侧）
 .github/workflows/
   build.yml              构建 + 校验 + apk 源差分发布（Actions 备用）
   sync-upstream.yml      上游同步（已暂停，见文件内注释）

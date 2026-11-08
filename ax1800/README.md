@@ -18,9 +18,12 @@
 | `ax1800/config/kernel-dae.config` | dae 需要的内核能力（**只开内核，dae 本体以后单独装**） |
 | `ax1800/config/repos.config` | 运行时 apk 源与 feed 开关 |
 | `ax1800/config/apk-repo.config` | 自建 apk 源的构建开关（SIGNED_PACKAGES） |
+| `ax1800/config/kernel-dae.config` | dae 内核能力 + **1GB 内存画像与 NSS 性能优化** |
+| `ax1800/config/feeds.lock.json` | feed 钉子：全部 feed 锁到已知良好提交（删掉本文件即恢复浮动更新） |
 | `ax1800/files/etc/uci-defaults/99-ax1800` | 首启配置：IPv6、NAT1、双频合一 WiFi、时区、主题 |
 | `ax1800/scripts/set-kernel-size.sh` | 内核分区 6144k → 12288k（12M 表必须） |
 | `ax1800/scripts/local-build.sh` | **本地一键构建**（WSL2）：feeds→config→编译→校验→apk 源打包 |
+| `ax1800/scripts/publish.sh` | **发布脚本**（Windows 侧）：推 apk-repo + 单条目 Release |
 | `.github/workflows/build.yml` | GitHub Actions 构建流程（账单恢复后可用） |
 
 ---
@@ -53,19 +56,21 @@ cd ~/LibWrt
 sh ax1800/scripts/local-build.sh 12288        # 12M 表；原厂 6M 表传 6144
 ```
 
-脚本一条龙：feeds（上游 + passwall 双源 + iStore 钉 `a97ace34` + argon 3.x 钉 `c6d63bd6`）
-→ 合并配置片段 → `set-kernel-size.sh` → 密码注入（默认 `root`）→ `make download`
-→ `make IGNORE_ERRORS=m`（=m 的冷门 kmod 编不过自动跳过）→ FIT/manifest 校验 →
+脚本一条龙：feeds（**全 feed 按 `feeds.lock.json` 钉到已知良好提交**）→ 合并配置片段
+→ `set-kernel-size.sh` → CRLF 守卫（`\r` 会毁 init 脚本 shebang）→ 密码注入（默认 `root`）
+→ `make download` → `make IGNORE_ERRORS=m`（=m 的冷门 kmod 编不过自动跳过）→
+FIT/manifest 校验 → **镜像内容自检**（解包 sysupgrade 验证关键文件与源地址真的在 rootfs 里）→
 **差分打包自建 apk 源**到 `bin/apk-repo-out/`（kmod 全量 + 官方源没有的私有包，索引已签名）。
 
-编完后在 Windows 侧推送/发布（gh 凭据在 Windows）：
+编完后在 Windows 侧一条命令发布（**单条目 Release 模式**：tag 固定 `ax1800-local`，
+每次构建更新同一条目，资产 `--clobber` 覆盖，不刷屏）：
 
 ```sh
-git -C "//wsl.localhost/Ubuntu-22.04/root/LibWrt/bin/apk-repo-out" push -f https://github.com/huidegit/LibWrt-X-AX1800.git apk-repo
-gh release create ax1800-<日期> --repo huidegit/LibWrt-X-AX1800 --notes-file "//wsl.localhost/Ubuntu-22.04/root/LibWrt/bin/release-notes.md" "//wsl.localhost/Ubuntu-22.04/root/LibWrt/bin/targets/qualcommax/ipq60xx/*factory.bin" "//wsl.localhost/Ubuntu-22.04/root/LibWrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin" "//wsl.localhost/Ubuntu-22.04/root/LibWrt/bin/targets/qualcommax/ipq60xx/*.manifest" "//wsl.localhost/Ubuntu-22.04/root/LibWrt/bin/targets/qualcommax/ipq60xx/sha256sums"
+sh ax1800/scripts/publish.sh
 ```
 
-产物：`*factory.bin`（U-Boot `/firmware.html`）、`*sysupgrade.bin`（LuCI 升级）。
+产物：`*factory.bin`（U-Boot 刷写）、`*sysupgrade.bin`（LuCI 升级）、
+Release 页固定为 `ax1800-local`。
 
 ### GitHub Actions（备用）
 
@@ -128,6 +133,26 @@ BTF 段在 arm64 上约 5 MiB，进 FIT 后 +1.5~2 MiB —— 6 MiB 分区放不
 
 ---
 
+## 1GB 内存与 NSS 性能优化（kernel-dae.config）
+
+本设备是 1 GiB 硬改机，配置里叠了一组 ZqinKing 亚瑟档案同款的优化（符号均已在 LibWrt 树内验证）：
+
+| 配置 | 作用 |
+|---|---|
+| `IPQ_MEM_PROFILE_256` | SoC 内存画像 256M 档：内核缓冲更保守，可用内存更多 |
+| `ATH11K_MEM_PROFILE_512M` | ath11k WiFi 驱动小内存方案 |
+| `NSS_MEM_PROFILE_HIGH` | NSS NAT 表项高配（1GB 内存撑得住） |
+| `NSS_FIRMWARE_VERSION_11_4` | 钉 NSS 固件 11.4（与 laipeng668 nss_packages 匹配） |
+| `KERNEL_SKB_RECYCLER(+MULTI_CPU)` | SKB 回收器：QSDK 的 NAT 多核性能利器 |
+| `NSS_DRV_WIFI_MESH_ENABLE` + `ATH11K_NSS_MESH_SUPPORT` + `MAC80211_MESH` | NSS Mesh 卸载（双频合一/mesh 场景） |
+| `kmod-qca-mcs` | NSS 组播卸载 |
+| NSS PPPoE/PPTP 卸载 | LibWrt target 默认已含（qualcommax/Makefile），拨号场景白捡 |
+
+代价说明：`IPQ_MEM_PROFILE_256` 是行为变更（内核缓冲保守换可用内存），对跑代理/Docker 的 1GB 机是正收益；
+极端吞吐场景理论上略吃亏。ZqinKing 在同款 1GB 亚瑟上实测用这套。
+
+---
+
 ## 软件源与自建 apk-repo
 
 固件是 **apk**（LibWrt 默认 `CONFIG_USE_APK=y`）。内置三把钥匙：
@@ -165,3 +190,16 @@ apk 每次装/卸/升级事务结束都会解析 `/etc/apk/world`（全部已装
 - **这棵树的 `scripts/feeds` 不支持 `src-git url;<sha>` 直拼**——会把 SHA 当分支名 clone 失败；先 update 再 `git -C feeds/<name> checkout <sha>`（local-build.sh 已按此写）
 - WSL2 编译两个坑：① 默认 root 下 GNU tar 拒绝 configure，需 `FORCE_UNSAFE_CONFIGURE=1`（脚本已内置）；② WSL 会把 Windows PATH 追加进来，rust 安装的 `find -execdir` 检测到带空格的非纯路径直接拒绝——脚本已把 PATH 洗成纯 Linux
 - PassWall 的 xray/sing-box 核心运行时由它在 LuCI 里自己下载（走 GitHub，网络不稳时多试）
+- **本仓库本地构建链的 WSL 专属坑（local-build.sh 已内置处理）**：root 下 GNU tar 拒绝 configure（`FORCE_UNSAFE_CONFIGURE=1`）；WSL 会把 Windows PATH 追加进来导致 rust 安装的 `find -execdir` 拒绝执行（脚本把 PATH 洗成纯 Linux）；codelinaro 重写过历史，nss_packages git 型包的锁定哈希对不上（脚本剥掉 `PKG_MIRROR_HASH`）；`scripts/feeds` 不支持 `;sha` 直拼（update 后手动 checkout）；WSL 的 `/tmp` 是 tmpfs，虚拟机空闲关机即清空（持久产物放 `/root`）
+
+## 借鉴来源
+
+本仓库的不少做法抄自同设备的优秀项目，排名不分先后：
+
+| 来源 | 抄了什么 |
+|---|---|
+| [natserver/istoreos](https://github.com/natserver/istoreos)（同设备 iStoreOS 25.12，每几天一版） | 编译后 unsquashfs 镜像内容自检、CRLF 守卫、po 目录守卫思路、`/big.html` 12M 刷机入口 |
+| [natserver/NatserverWrt](https://github.com/natserver/NatserverWrt)（同作者 NSS snapshot + daed） | 上游版本去重（Release grep 短 SHA） |
+| [EmptyGhost/LibWrt-JDC-RE-SS-01-CI](https://github.com/EmptyGhost/LibWrt-JDC-RE-SS-01-CI)（同底座 CI） | 单条目 Release 模式、HiGarfield/cachewrtbuild 缓存 |
+| [cookorz1/ax1800pro-cookwrt](https://github.com/cookorz1/ax1800pro-cookwrt)（LibWrt 系定制） | feeds.lock 可复现构建思路 |
+| [ZqinKing/wrt_release](https://github.com/ZqinKing/wrt_release)（★720 多设备构建器） | 1GB 内存画像三件套、SKB 回收器、NSS Mesh/组播卸载（亚瑟档案 `jdcloud_ipq60xx_libwrt`） |
