@@ -104,6 +104,17 @@ for m in feeds/nss_packages/*/Makefile; do
 done
 echo "[+] nss_packages 的锁定哈希已剥离（git 型包）"
 
+# rust 的 LLVM 预编译产物（ci-artifacts.rust-lang.org）有时效，过期即 404
+# （2026-11-13 实测 rustc 1.96.0 的 rust-dev 已删）。干净环境必挂。改为：
+#   1) 关闭 download-ci-llvm，从 rustc 源码包自带的 LLVM 源码本地编译
+#   2) x.py 限 8 线程，防 16 并行 LLVM 编译把 20G 内存打爆
+sed -i 's/--set=llvm.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' \
+	feeds/packages/lang/rust/Makefile
+sed -i 's/x.py --ci false/x.py -j 8 --ci false/' feeds/packages/lang/rust/Makefile
+grep -q 'download-ci-llvm=false' feeds/packages/lang/rust/Makefile \
+	&& echo "[+] rust 改为本地编译 LLVM（-j 8）" \
+	|| echo "[w] rust Makefile 补丁没打上（上游格式变了？）"
+
 echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
 ./scripts/feeds update istore
 # 这棵树的 scripts/feeds 不支持 ;<sha> 直拼（会被当分支名 clone 失败），更新后手动钉住
