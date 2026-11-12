@@ -110,7 +110,7 @@ echo "[+] nss_packages 的锁定哈希已剥离（git 型包）"
 #   2) x.py 限 8 线程，防 16 并行 LLVM 编译把 20G 内存打爆
 sed -i 's/--set=llvm.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' \
 	feeds/packages/lang/rust/Makefile
-sed -i 's/x.py --ci false/x.py -j 8 --ci false/' feeds/packages/lang/rust/Makefile
+sed -i 's/x.py --ci false/x.py -j 4 --ci false/' feeds/packages/lang/rust/Makefile
 grep -q 'download-ci-llvm=false' feeds/packages/lang/rust/Makefile \
 	&& echo "[+] rust 改为本地编译 LLVM（-j 8）" \
 	|| echo "[w] rust Makefile 补丁没打上（上游格式变了？）"
