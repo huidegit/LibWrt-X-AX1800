@@ -69,7 +69,8 @@ echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-pass
 for d in feeds/*/; do
 	[ -d "$d/.git" ] && git -C "$d" checkout -f -- . >/dev/null 2>&1 || true
 done
-./scripts/feeds update -a
+./scripts/feeds update -a \
+	|| echo "[w] feeds update 有失败项（通常是上次锁定 SHA 造成的 detached HEAD），继续用 feeds.lock 钉子"
 
 # feeds.lock：把所有 feed 钉到已知良好提交（构建完全可复现）。
 # 删除 ax1800/config/feeds.lock.json 即恢复浮动更新。
