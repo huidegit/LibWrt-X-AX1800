@@ -117,7 +117,18 @@ rm -rf package/luci-theme-argon package/luci-app-argon-config
 git init -q package/luci-theme-argon
 git -C package/luci-theme-argon remote add origin https://github.com/jerrykuku/luci-theme-argon.git
 echo "[i] 拉取 argon pinned commit…"
-git -C package/luci-theme-argon fetch --depth 1 origin c6d63bd68aa9272e40c35cee5e615f45cc1e4eb0
+# 代理偶发抖动会让 fetch 报 "could not read Username"（服务端瞬时 401）——重试 3 次
+argon_ok=0
+for i in 1 2 3; do
+	if GIT_TERMINAL_PROMPT=0 git -C package/luci-theme-argon fetch -q --depth 1 \
+		origin c6d63bd68aa9272e40c35cee5e615f45cc1e4eb0; then
+		argon_ok=1
+		break
+	fi
+	echo "[w] argon 拉取失败（第 $i 次），重试…"
+	sleep 3
+done
+[ "$argon_ok" = 1 ] || { echo "[x] argon 拉取失败（3 次）" >&2; exit 1; }
 git -C package/luci-theme-argon checkout -q FETCH_HEAD
 test -f package/luci-theme-argon/Makefile || { echo "[x] argon Makefile 缺失" >&2; exit 1; }
 grep -q 'PKG_VERSION:=3' package/luci-theme-argon/Makefile
