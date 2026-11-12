@@ -242,6 +242,38 @@ sq=$(od -An -tx1 -j"$lim" -N4 "$f" | tr -d ' \n')
 [ "$sq" = "68737173" ] || { echo "[x] ${KS}k 处不是 hsqs（$sq），内核/rootfs 边界异常" >&2; exit 1; }
 echo "[+] 边界正确"
 
+	# ---------- 元数据自检（2026-11-12 刷机事故后加）：fwtool trailer CRC ----------
+	# 构建侧坏镜像在这里拦住；下载侧坏文件靠 ax1800/scripts/verify-firmware.py。
+	FT=staging_dir/host/bin/fwtool
+	if [ -x "$FT" ]; then
+		for img in "$T"/*jdcloud_re-ss-01-squashfs-*.bin; do
+			if [ "$(tail -c 16 "$img" | head -c 4)" = "FWx0" ]; then
+				if "$FT" -i "$img" >/dev/null 2>&1; then
+					echo "[+] metadata CRC OK: $(basename "$img")"
+				else
+					echo "[x] metadata CRC 失败: $img" >&2
+					exit 1
+				fi
+			else
+				echo "[w] 无 FWx0 trailer，跳过: $(basename "$img")"
+			fi
+		done
+	else
+		echo "[w] 找不到 host fwtool，跳过元数据自检"
+	fi
+
+	# ---------- 内核配置自检：SKB 回收器是否真的编进内核 ----------
+	KC=$(ls build_dir/target-*/linux-*/linux-*/.config 2>/dev/null | head -1)
+	if [ -n "$KC" ]; then
+		if grep -q '^CONFIG_SKB_RECYCLER=y' "$KC"; then
+			echo "[+] 内核 SKB_RECYCLER=y（$(basename "$(dirname "$KC")")）"
+		else
+			echo "[w] 内核 SKB_RECYCLER 未启用（$KC）——性能优化项，非致命" >&2
+		fi
+	else
+		echo "[w] 没找到内核 .config，跳过 SKB 检查"
+	fi
+
 man=$(ls "$T"/*jdcloud_re-ss-01.manifest | head -1)
 echo "manifest: $(wc -l < "$man") 个包"
 	for p in luci-theme-argon luci-app-store luci-app-openclash luci-app-usteer \

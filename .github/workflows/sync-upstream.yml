@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -84,6 +84,25 @@ jobs:
             git push origin HEAD:25.12-nss
             echo "已合并并推送"
           fi
+
+      - name: 合并后自检
+        # 上游同步的最大风险：merge 没冲突，但把 ax1800 定制冲掉了，或引入重复内核符号。
+        # 这里在触发构建前先验关键标记，任一丢失直接红，不浪费一次 3 小时构建。
+        run: |
+          set -eu
+          fail=0
+          grep -q '^CONFIG_PACKAGE_kmod-tls=y' ax1800/config/packages.config \
+            || { echo "::error::packages.config 丢了 kmod-tls（BUG#2 级联头）"; fail=1; }
+          grep -q 'sqm-scripts-nss' .github/workflows/build.yml \
+            || { echo "::error::build.yml 丢了 SQM 断言"; fail=1; }
+          test -f ax1800/files/etc/uci-defaults/zz-ax1800 \
+            || { echo "::error::zz-ax1800（BUG#1 IPv6 覆盖修复）丢了"; fail=1; }
+          grep -q 'set-kernel-size' .github/workflows/build.yml \
+            || { echo "::error::build.yml 丢了 KERNEL_SIZE 步骤"; fail=1; }
+          dup=$(grep -oE '^(# )?CONFIG_[A-Z0-9_]+' target/linux/qualcommax/config-6.12 \
+                  | sed 's/^# //' | sort | uniq -d | tr '\n' ' ')
+          [ -z "$dup" ] || { echo "::error::config-6.12 有重复符号：$dup"; fail=1; }
+          [ "$fail" -eq 0 ] && echo "[+] 合并后自检通过（关键标记齐全、无重复内核符号）"
 
       - name: 触发构建
         # Actions 账单恢复前手动触发；恢复后改回 if: steps.up.outputs.changed == 'true'

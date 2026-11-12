@@ -51,7 +51,7 @@ jobs:
           [ "$avail" -ge 25 ] || { echo "::error::根分区只剩 ${avail}G，OpenWrt 至少需要 25G"; exit 1; }
 
       - name: 检出源码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -228,7 +228,6 @@ jobs:
         with:
           ccache: false
           prefix: ax1800
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 预下载依赖
         run: |
@@ -275,6 +274,40 @@ jobs:
             exit 1
           fi
           echo "[+] 关键包都在"
+
+          # 元数据自检（2026-11-12 刷机事故后加）：fwtool trailer CRC。
+          # 构建侧坏镜像在这里拦住；下载侧坏文件靠 ax1800/scripts/verify-firmware.py。
+          ft=staging_dir/host/bin/fwtool
+          if [ -x "$ft" ]; then
+            for img in bin/targets/qualcommax/ipq60xx/*jdcloud_re-ss-01-squashfs-*.bin; do
+              if [ "$(tail -c 16 "$img" | head -c 4)" = "FWx0" ]; then
+                "$ft" -i "$img" >/dev/null 2>&1 \
+                  || { echo "::error::元数据 CRC 校验失败: $img"; exit 1; }
+                echo "[+] metadata CRC OK: $(basename "$img")"
+              else
+                echo "::warning::无 FWx0 trailer，跳过元数据自检: $(basename "$img")"
+              fi
+            done
+          else
+            echo "::warning::找不到 host fwtool，跳过元数据自检"
+          fi
+
+          # 内核配置自检：确认 SKB 回收器真的编进内核（基线 =y 不代表生效）
+          kc=$(ls build_dir/target-*/linux-*/linux-*/.config 2>/dev/null | head -1)
+          if [ -n "$kc" ]; then
+            grep -q '^CONFIG_SKB_RECYCLER=y' "$kc" \
+              && echo "[+] 内核 SKB_RECYCLER=y" \
+              || echo "::warning::内核 SKB_RECYCLER 未启用（$kc）——性能优化项，非致命"
+          else
+            echo "::warning::没找到内核 .config，跳过 SKB 检查"
+          fi
+
+          {
+            echo "### 镜像 sha256"
+            echo '```'
+            sha256sum bin/targets/qualcommax/ipq60xx/*.bin
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 发布 apk 源到 apk-repo 分支
         env:
@@ -427,11 +460,16 @@ jobs:
             echo "## 刷写"
             echo "- 12M 表：U-Boot \`/firmware.html\` 刷 \`*factory.bin\`"
             echo "- 已在本固件上：LuCI 升级或用 \`sysupgrade *sysupgrade.bin\`"
+            echo
+            echo "## ⚠️ 刷前校验（2026-11-12 事故后强制）"
+            echo "- 先比对清单：\`sha256sum -c sha256sums --ignore-missing\`"
+            echo "- 再验元数据：\`python3 verify-firmware.py <镜像.bin>\`，必须输出 \`CRC … 匹配\`"
+            echo "- \`fwtool -i\` 报 \`CRC error\` 的镜像**一律重新下载**；**禁止 \`sysupgrade -F\`**（会先把内核分区头清零，坏内核必砖）"
           } > /tmp/release-notes.md
           cat /tmp/release-notes.md
 
       - name: 上传 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ax1800-${{ github.run_number }}
           path: |
@@ -452,6 +490,7 @@ jobs:
             bin/targets/qualcommax/ipq60xx/*sysupgrade.bin \
             bin/targets/qualcommax/ipq60xx/*.manifest \
             bin/targets/qualcommax/ipq60xx/sha256sums \
+            ax1800/scripts/verify-firmware.py \
             --title "$tag" --notes-file /tmp/release-notes.md
 
       - name: 记录本次构建的上游版本
