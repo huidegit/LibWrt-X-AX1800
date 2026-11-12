@@ -64,6 +64,11 @@ cp feeds.conf.default feeds.conf
 # PassWall：应用本体在 openwrt-passwall，C 依赖在 openwrt-passwall-packages
 echo 'src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git' >> feeds.conf
 echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git' >> feeds.conf
+# 上次构建的 sed（剥 PKG_MIRROR_HASH）会让 git pull 拒绝合并 → 更新前先丢弃 feed 工作区改动。
+# 这些改动都是本脚本自己做的，稍后会重新施加，丢弃安全。
+for d in feeds/*/; do
+	[ -d "$d/.git" ] && git -C "$d" checkout -f -- . >/dev/null 2>&1 || true
+done
 ./scripts/feeds update -a
 
 # feeds.lock：把所有 feed 钉到已知良好提交（构建完全可复现）。
