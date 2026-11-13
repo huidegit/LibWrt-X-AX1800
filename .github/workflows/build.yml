@@ -94,6 +94,17 @@ jobs:
             grep -q '^PKG_SOURCE_PROTO:=git' "$m" && sed -i '/^PKG_MIRROR_HASH:=/d' "$m"
           done
 
+          # rust 的 LLVM 预编译产物（ci-artifacts.rust-lang.org）有时效，过期即 404
+          # （2026-11-13 实测 rustc 1.96.0 的 rust-dev 已删，无缓存的干净构建必挂）。
+          # 关闭 download-ci-llvm 改为源码编 LLVM；x.py 限 4 线程防内存爆。
+          # 注意：只影响构建工具链，不进固件，固件内容与之前完全一致。
+          sed -i 's/--set=llvm.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' \
+            feeds/packages/lang/rust/Makefile
+          sed -i 's/x.py --ci false/x.py -j 4 --ci false/' feeds/packages/lang/rust/Makefile
+          grep -q 'download-ci-llvm=false' feeds/packages/lang/rust/Makefile \
+            || { echo "::error::rust Makefile 补丁没打上（上游格式变了）"; exit 1; }
+          echo "[+] rust 改为本地编译 LLVM（-j 4）"
+
           echo 'src-git istore https://github.com/linkease/istore.git' >> feeds.conf
           ./scripts/feeds update istore
           # 这棵树的 scripts/feeds 不支持 ;<sha> 直拼（会被当分支名 clone 失败），更新后手动钉住
